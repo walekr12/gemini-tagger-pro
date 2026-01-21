@@ -507,6 +507,8 @@ const App: React.FC = () => {
     // 检查是否已被中断
     if (signal?.aborted) throw new Error("已停止");
 
+    const temperature = endpoint.temperature ?? 1.0; // 默认温度 1.0
+
     if (endpoint.type === 'google_sdk') {
       const ai = new GoogleGenAI({ apiKey: endpoint.apiKey });
       // Google SDK 不原生支持 AbortSignal，用 Promise.race 实现超时中断
@@ -517,12 +519,15 @@ const App: React.FC = () => {
           { role: 'model', parts: [{ text: currentConfig.prompt.stage2 }] },
           { role: 'user', parts: [{ inlineData: { mimeType: mimeType, data: base64 } }, { text: currentConfig.prompt.stage3 }] }
         ],
-        config: { safetySettings: [
-          { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-          { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
-        ] }
+        config: {
+          temperature: temperature,
+          safetySettings: [
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+          ]
+        }
       });
 
       // 创建一个可以被 abort 信号中断的 Promise
@@ -542,7 +547,8 @@ const App: React.FC = () => {
         body: JSON.stringify({
           model: endpoint.model,
           messages: [{ role: 'user', content: currentConfig.prompt.stage1 }, { role: 'assistant', content: currentConfig.prompt.stage2 }, { role: 'user', content: [{ type: "text", text: currentConfig.prompt.stage3 }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }] }],
-          max_tokens: 1024
+          max_tokens: 1024,
+          temperature: temperature
         }),
         signal // 直接传递 AbortSignal 给 fetch
       });
@@ -923,6 +929,20 @@ const App: React.FC = () => {
                    <div className="flex gap-2">
                      <button onClick={() => fetchModelsForEndpoint(ep.id)} disabled={ep.isChecking || !ep.apiKey || ep.disabled} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center shrink-0 w-24 ${ep.connectionStatus === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : ep.connectionStatus === 'error' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' : 'bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500'}`}>{ep.isChecking ? <Loader2 className="w-3 h-3 animate-spin" /> : ep.connectionStatus === 'success' ? <Wifi className="w-3 h-3" /> : ep.connectionStatus === 'error' ? <WifiOff className="w-3 h-3" /> : '连接'}</button>
                      <div className="relative flex-1"><select value={ep.model} onChange={(e) => updateEndpoint(ep.id, { model: e.target.value })} className="w-full h-full bg-slate-900 border border-slate-700 rounded-lg text-xs pl-2 pr-8 py-1.5 outline-none appearance-none">{ep.availableModels?.map(m => (<option key={m} value={m}>{m}</option>)) || <option value={ep.model}>{ep.model}</option>}</select><List className="w-3 h-3 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" /></div>
+                   </div>
+                   {/* 温度设置 */}
+                   <div className="flex items-center gap-3 pt-2">
+                     <span className="text-[10px] text-slate-500 shrink-0">温度</span>
+                     <input
+                       type="range"
+                       min="0"
+                       max="2"
+                       step="0.1"
+                       value={ep.temperature ?? 1.0}
+                       onChange={(e) => updateEndpoint(ep.id, { temperature: parseFloat(e.target.value) })}
+                       className="flex-1 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                     />
+                     <span className="text-[10px] text-indigo-400 font-bold w-8 text-right">{(ep.temperature ?? 1.0).toFixed(1)}</span>
                    </div>
                  </div>
                </div>

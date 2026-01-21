@@ -27,6 +27,7 @@ export interface Endpoint {
   model: string;
   active: boolean;
   disabled?: boolean; // 虚化状态：保留配置但不参与处理
+  temperature?: number; // 温度设置 (0-2)
 
   // 节点连接状态与模型列表
   availableModels?: string[];
