@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Gemini Tagger Pro</string>
+    <string name="title_activity_main">Gemini Tagger Pro</string>
+    <string name="package_name">com.gemini.taggerpro</string>
+    <string name="custom_url_scheme">com.gemini.taggerpro</string>
+</resources>

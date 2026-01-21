@@ -4,7 +4,14 @@
       "Bash(*)",
       "Bash(git commit:*)",
       "Bash(git branch:*)",
-      "Bash(where:*)"
+      "Bash(where:*)",
+      "Bash(gh auth:*)",
+      "Bash(gh repo create:*)",
+      "Bash(npm install)",
+      "Bash(npm view:*)",
+      "Bash(git push:*)",
+      "Bash(git tag:*)",
+      "Bash(npx cap add:*)"
     ]
   }
 }
