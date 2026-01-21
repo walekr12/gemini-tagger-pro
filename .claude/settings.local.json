@@ -16,7 +16,9 @@
       "Bash(./gradlew assembleDebug:*)",
       "Bash(npm run dev)",
       "Bash(curl:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git config:*)",
+      "Bash(git gc:*)"
     ]
   }
 }
