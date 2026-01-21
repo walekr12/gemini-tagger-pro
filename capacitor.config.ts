@@ -5,7 +5,8 @@ const config: CapacitorConfig = {
   appName: 'Gemini Tagger Pro',
   webDir: 'dist',
   server: {
-    androidScheme: 'https'
+    androidScheme: 'http',
+    cleartext: true
   }
 };
 
