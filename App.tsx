@@ -1,12 +1,12 @@
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { 
-  Upload, Settings2, Play, Download, Trash2, 
-  CheckCircle2, AlertCircle, Loader2, Zap, 
-  Plus, Server, Save, FileUp, Activity, 
-  Image as ImageIcon, RotateCw, RefreshCcw, 
+import {
+  Upload, Settings2, Play, Download, Trash2,
+  CheckCircle2, AlertCircle, Loader2, Zap,
+  Plus, Server, Save, FileUp, Activity,
+  Image as ImageIcon, RotateCw, RefreshCcw,
   Wifi, WifiOff, List, Ruler, Square,
-  MessageSquare, MonitorPlay
+  MessageSquare, MonitorPlay, Copy, EyeOff, Eye
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
@@ -88,18 +88,20 @@ const Navbar = () => (
 );
 
 // === 独立的卡片组件，使用 React.memo 优化渲染性能 ===
-const ItemCard = React.memo(({ 
-  item, 
-  isProcessing, 
-  maxRetry, 
-  onReset, 
-  onUpdateTags 
-}: { 
-  item: TaggingItem, 
-  isProcessing: boolean, 
+const ItemCard = React.memo(({
+  item,
+  isProcessing,
+  maxRetry,
+  onReset,
+  onUpdateTags,
+  onStopItem
+}: {
+  item: TaggingItem,
+  isProcessing: boolean,
   maxRetry: number,
   onReset: (id: string) => void,
-  onUpdateTags: (id: string, val: string) => void
+  onUpdateTags: (id: string, val: string) => void,
+  onStopItem?: (id: string) => void
 }) => {
   return (
     <div 
@@ -148,7 +150,18 @@ const ItemCard = React.memo(({
 
         {item.status === 'processing' && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px] z-20">
-            <Loader2 className="w-8 h-8 text-white animate-spin" />
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="w-8 h-8 text-white animate-spin" />
+              {onStopItem && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onStopItem(item.id); }}
+                  className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-bold rounded-lg shadow-lg transition-all flex items-center gap-1"
+                  title="停止此任务"
+                >
+                  <Square className="w-3 h-3 fill-current" /> 停止
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -199,6 +212,8 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const configInputRef = useRef<HTMLInputElement>(null);
   const stopRef = useRef(false);
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map()); // 每个任务的中断控制器
+  const stoppedItemsRef = useRef<Set<string>>(new Set()); // 被单独停止的任务ID
 
   // === 全局配置状态 ===
   const [config, setConfig] = useState<GlobalConfig>({
@@ -207,7 +222,7 @@ const App: React.FC = () => {
         id: 'default-sdk', 
         name: '默认 Google SDK', 
         type: 'google_sdk', 
-        apiKey: process.env.API_KEY || '', 
+        apiKey: import.meta.env.VITE_GEMINI_API_KEY || '', 
         model: 'gemini-3-flash-preview',
         active: true,
         availableModels: DEFAULT_GEMINI_MODELS
@@ -265,6 +280,18 @@ const App: React.FC = () => {
       apiKey: '', baseUrl: 'https://api.openai.com/v1', model: 'gemini-3-flash-preview',
       active: true, connectionStatus: 'idle'
     }]}));
+  };
+
+  // 复制节点
+  const copyEndpoint = (ep: Endpoint) => {
+    const newEndpoint: Endpoint = {
+      ...ep,
+      id: Math.random().toString(36).substr(2, 9),
+      name: `${ep.name} (副本)`,
+      connectionStatus: 'idle',
+      isChecking: false
+    };
+    setConfig(prev => ({ ...prev, endpoints: [...prev.endpoints, newEndpoint] }));
   };
 
   const updateEndpoint = (id: string, updates: Partial<Endpoint>) => {
@@ -371,6 +398,70 @@ const App: React.FC = () => {
     finally { setItems(prev => [...prev, ...newImageItems]); setImportProgress(null); if (fileInputRef.current) fileInputRef.current.value = ''; setActiveTab('workspace'); }
   };
 
+  // 拖放状态
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // 处理拖放文件（支持图片、ZIP、配置文件）
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    // 检查是否有配置文件
+    const configFile = Array.from(files).find(f => f.name.endsWith('.json'));
+    if (configFile) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const parsed = JSON.parse(event.target?.result as string);
+          if (parsed.endpoints) {
+            const restoredEndpoints = parsed.endpoints.map((ep: any) => ({
+              ...ep, isChecking: false, connectionStatus: 'idle', connectionMessage: '',
+              availableModels: ep.availableModels || (ep.type === 'google_sdk' ? DEFAULT_GEMINI_MODELS : [])
+            }));
+            setConfig({ ...parsed, endpoints: restoredEndpoints });
+            alert('配置已导入！');
+          }
+        } catch { alert('配置文件解析失败'); }
+      };
+      reader.readAsText(configFile);
+      // 如果只有配置文件，直接返回
+      if (files.length === 1) return;
+    }
+
+    // 处理图片和 ZIP 文件（复用现有逻辑）
+    const imageAndZipFiles = Array.from(files).filter(f =>
+      /\.(jpe?g|png|webp|bmp|gif|tiff?|zip)$/i.test(f.name) ||
+      f.type.startsWith('image/') ||
+      f.type === 'application/zip'
+    );
+
+    if (imageAndZipFiles.length === 0) return;
+
+    // 创建一个模拟的 event 对象来复用 handleFileUpload
+    const dataTransfer = new DataTransfer();
+    imageAndZipFiles.forEach(f => dataTransfer.items.add(f));
+
+    // 直接调用文件处理逻辑
+    const fakeEvent = { target: { files: dataTransfer.files } } as React.ChangeEvent<HTMLInputElement>;
+    await handleFileUpload(fakeEvent);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
   // 使用 useCallback 优化，传递给 Memoized 组件
   const handleTagUpdate = useCallback((id: string, newTags: string) => {
     setItems(prev => prev.map(item => item.id === id ? { ...item, tags: newTags } : item));
@@ -412,10 +503,14 @@ const App: React.FC = () => {
     });
   };
 
-  const callApi = async (item: TaggingItem, endpoint: Endpoint, base64: string, mimeType: string, currentConfig: GlobalConfig): Promise<string> => {
+  const callApi = async (item: TaggingItem, endpoint: Endpoint, base64: string, mimeType: string, currentConfig: GlobalConfig, signal?: AbortSignal): Promise<string> => {
+    // 检查是否已被中断
+    if (signal?.aborted) throw new Error("已停止");
+
     if (endpoint.type === 'google_sdk') {
       const ai = new GoogleGenAI({ apiKey: endpoint.apiKey });
-      const response = await ai.models.generateContent({
+      // Google SDK 不原生支持 AbortSignal，用 Promise.race 实现超时中断
+      const apiPromise = ai.models.generateContent({
         model: endpoint.model,
         contents: [
           { role: 'user', parts: [{ text: currentConfig.prompt.stage1 }] },
@@ -429,41 +524,61 @@ const App: React.FC = () => {
           { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
         ] }
       });
+
+      // 创建一个可以被 abort 信号中断的 Promise
+      const abortPromise = new Promise<never>((_, reject) => {
+        if (signal) {
+          signal.addEventListener('abort', () => reject(new Error("已停止")), { once: true });
+        }
+      });
+
+      const response = await Promise.race([apiPromise, abortPromise]);
       return response.text || "";
     } else {
       const baseUrl = endpoint.baseUrl?.replace(/\/+$/, '') || 'https://api.openai.com/v1';
       const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST', headers: { 'Authorization': `Bearer ${endpoint.apiKey}`, 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${endpoint.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: endpoint.model,
           messages: [{ role: 'user', content: currentConfig.prompt.stage1 }, { role: 'assistant', content: currentConfig.prompt.stage2 }, { role: 'user', content: [{ type: "text", text: currentConfig.prompt.stage3 }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } }] }],
           max_tokens: 1024
-        })
+        }),
+        signal // 直接传递 AbortSignal 给 fetch
       });
       if (!res.ok) { const err = await res.text(); if (res.status === 413) throw new Error("Payload Too Large"); throw new Error(`API Error ${res.status}: ${err.substring(0, 50)}`); }
       const data = await res.json(); return data.choices?.[0]?.message?.content || "";
     }
   };
 
-  const processItem = async (item: TaggingItem, endpoint: Endpoint, updateAttempts: (attempts: number) => void): Promise<{ tags: string; error?: string }> => {
+  const processItem = async (item: TaggingItem, endpoint: Endpoint, updateAttempts: (attempts: number) => void, signal?: AbortSignal): Promise<{ tags: string; error?: string }> => {
     const currentConfig = configRef.current;
     let currentBlob = item.blob;
     let attempt = 0;
     const maxAttempts = currentConfig.retry.enabled ? currentConfig.retry.maxAttempts : 1;
+
+    // 检查是否已被中断
+    if (signal?.aborted) return { tags: "", error: "已停止" };
+
     if (currentConfig.compression.enabled) {
       try { currentBlob = await compressImage(item.blob, currentConfig.compression.maxSizeMB, currentConfig.compression.maxWidthOrHeight, currentConfig.compression.quality); } catch (e) {}
     }
     const base64 = await blobToBase64(currentBlob);
     const mimeType = currentBlob.type || 'image/jpeg';
     while (attempt < maxAttempts) {
+      // 每次重试前检查是否被中断
+      if (signal?.aborted) return { tags: "", error: "已停止" };
+
       try {
         attempt++;
         updateAttempts(attempt); // 使用回调更新，减少状态更新频率
-        const result = await callApi(item, endpoint, base64, mimeType, currentConfig);
+        const result = await callApi(item, endpoint, base64, mimeType, currentConfig, signal);
         if (!result || result.trim() === "") throw new Error("Empty response");
         if (currentConfig.validation.enabled && result.length <= currentConfig.validation.minChars) throw new Error(`Too short (${result.length})`);
         return { tags: result };
       } catch (err: any) {
+        // 如果是中断错误，直接返回
+        if (err.message === "已停止" || signal?.aborted) return { tags: "", error: "已停止" };
         if (err.message.includes("401") || err.message.includes("403") || attempt >= maxAttempts) return { tags: "", error: err.message };
         await new Promise(r => setTimeout(r, currentConfig.retry.retryIntervalMs));
       }
@@ -471,10 +586,28 @@ const App: React.FC = () => {
     return { tags: "", error: "Max attempts reached" };
   };
 
-  const handleStop = () => { stopRef.current = true; };
+  // 停止所有处理 - 立即中断所有进行中的请求
+  const handleStop = () => {
+    stopRef.current = true;
+    // 中断所有正在进行的请求
+    abortControllersRef.current.forEach((controller, itemId) => {
+      controller.abort();
+    });
+    abortControllersRef.current.clear();
+  };
+
+  // 停止单个任务
+  const handleStopItem = useCallback((itemId: string) => {
+    stoppedItemsRef.current.add(itemId);
+    const controller = abortControllersRef.current.get(itemId);
+    if (controller) {
+      controller.abort();
+      abortControllersRef.current.delete(itemId);
+    }
+  }, []);
 
   const processBatch = async () => {
-    if (configRef.current.endpoints.filter(e => e.active && e.apiKey).length === 0) { alert("请配置 API 节点"); setActiveTab('endpoints'); return; }
+    if (configRef.current.endpoints.filter(e => e.active && e.apiKey && !e.disabled).length === 0) { alert("请配置 API 节点"); setActiveTab('endpoints'); return; }
     if (isProcessing) return;
     stopRef.current = false;
 
@@ -526,8 +659,15 @@ const App: React.FC = () => {
         if (itemIndex >= pendingItems.length) break;
 
         const item = pendingItems[itemIndex];
+
+        // 检查该项目是否已被单独停止
+        if (stoppedItemsRef.current.has(item.id)) {
+          stoppedItemsRef.current.delete(item.id);
+          continue;
+        }
+
         const freshConfig = configRef.current;
-        const freshActiveEndpoints = freshConfig.endpoints.filter(e => e.active && e.apiKey);
+        const freshActiveEndpoints = freshConfig.endpoints.filter(e => e.active && e.apiKey && !e.disabled);
 
         if (freshActiveEndpoints.length === 0) {
           queueUpdate(item.id, { status: 'error', error: '无可用节点' });
@@ -537,6 +677,10 @@ const App: React.FC = () => {
         const endpoint = freshActiveEndpoints[endpointIndex % freshActiveEndpoints.length];
         endpointIndex++;
 
+        // 为该项目创建 AbortController
+        const controller = new AbortController();
+        abortControllersRef.current.set(item.id, controller);
+
         // 开始处理
         queueUpdate(item.id, { status: 'processing', error: undefined, attempts: 0 });
 
@@ -545,14 +689,21 @@ const App: React.FC = () => {
 
         const result = await processItem(item, endpoint, (attempts) => {
           queueUpdate(item.id, { attempts });
-        });
+        }, controller.signal);
 
-        // 处理完成
-        queueUpdate(item.id, {
-          status: result.error ? 'error' : 'completed',
-          tags: result.tags,
-          error: result.error
-        });
+        // 清理 AbortController
+        abortControllersRef.current.delete(item.id);
+
+        // 处理完成 - 如果是被停止的，状态设为 pending 而非 error
+        if (result.error === "已停止") {
+          queueUpdate(item.id, { status: 'pending', error: undefined, attempts: 0 });
+        } else {
+          queueUpdate(item.id, {
+            status: result.error ? 'error' : 'completed',
+            tags: result.tags,
+            error: result.error
+          });
+        }
 
         // 立即刷新完成状态
         flushUpdates();
@@ -572,16 +723,14 @@ const App: React.FC = () => {
   };
 
   const exportResults = async () => {
+    if (items.length === 0) return alert("无数据可导出");
     const zip = new JSZip();
-    let count = 0;
     items.forEach(item => {
-      if (item.status === 'completed' || (item.tags && item.tags.trim() !== '')) {
-        zip.file(`${getBaseName(item.name)}.txt`, item.tags || '');
-        zip.file(item.name, item.blob);
-        count++;
-      }
+      // 导出所有图片，无论是否已完成
+      zip.file(item.name, item.blob);
+      // 对应的 txt 文件（即使为空也创建）
+      zip.file(`${getBaseName(item.name)}.txt`, item.tags || '');
     });
-    if (count === 0) return alert("无数据可导出");
     const content = await zip.generateAsync({ type: 'blob' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(content); a.download = `dataset_${new Date().getTime()}.zip`;
@@ -600,9 +749,25 @@ const App: React.FC = () => {
   const remainingCount = stats.pending + stats.error;
 
   return (
-    <div className="min-h-screen flex flex-col selection:bg-indigo-500/30 font-sans text-slate-200">
+    <div
+      className="min-h-screen flex flex-col selection:bg-indigo-500/30 font-sans text-slate-200"
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+    >
       <Navbar />
-      
+
+      {/* 拖放覆盖层 */}
+      {isDragOver && (
+        <div className="fixed inset-0 z-[150] bg-indigo-900/80 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+          <div className="bg-slate-800 border-4 border-dashed border-indigo-400 p-12 rounded-3xl shadow-2xl text-center space-y-4 animate-pulse">
+            <Upload className="w-16 h-16 text-indigo-400 mx-auto" />
+            <h3 className="text-2xl font-bold text-white">释放以导入文件</h3>
+            <p className="text-sm text-slate-300">支持：图片、ZIP 压缩包、配置文件 (.json)</p>
+          </div>
+        </div>
+      )}
+
       {importProgress && (
         <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-800 border border-slate-700 p-8 rounded-2xl shadow-2xl max-w-md w-full text-center space-y-6">
@@ -678,13 +843,14 @@ const App: React.FC = () => {
                  <div className="flex-1 p-6 bg-slate-900/50">
                    <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-6">
                      {items.map((item) => (
-                       <ItemCard 
-                          key={item.id} 
-                          item={item} 
-                          isProcessing={isProcessing} 
+                       <ItemCard
+                          key={item.id}
+                          item={item}
+                          isProcessing={isProcessing}
                           maxRetry={configRef.current.retry.maxAttempts}
                           onReset={handleResetItem}
                           onUpdateTags={handleTagUpdate}
+                          onStopItem={handleStopItem}
                        />
                      ))}
                    </div>
@@ -730,20 +896,32 @@ const App: React.FC = () => {
         {activeTab === 'endpoints' && (
            <div className="max-w-4xl mx-auto space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
              {config.endpoints.map((ep, idx) => (
-               <div key={ep.id} className="bg-slate-800/40 border border-slate-700 rounded-xl p-4 space-y-3 relative group">
+               <div key={ep.id} className={`relative rounded-xl p-4 space-y-3 group transition-all ${ep.disabled ? 'bg-slate-900/30 border border-slate-800 opacity-50' : 'bg-slate-800/40 border border-slate-700'}`}>
+                 {/* 虚化遮罩提示 */}
+                 {ep.disabled && (
+                   <div className="absolute top-2 right-14 text-[10px] px-2 py-0.5 bg-slate-700 text-slate-400 rounded-md font-bold">
+                     已虚化
+                   </div>
+                 )}
                  <div className="flex items-center justify-between mb-2">
                    <div className="flex items-center gap-2">
-                     <input type="checkbox" checked={ep.active} onChange={(e) => updateEndpoint(ep.id, { active: e.target.checked })} className="w-3.5 h-3.5 accent-emerald-500 rounded cursor-pointer" />
-                     <input value={ep.name} onChange={(e) => updateEndpoint(ep.id, { name: e.target.value })} className="bg-transparent text-xs font-bold text-slate-200 border-none outline-none focus:ring-0 p-0 w-32" />
+                     <input type="checkbox" checked={ep.active} disabled={ep.disabled} onChange={(e) => updateEndpoint(ep.id, { active: e.target.checked })} className="w-3.5 h-3.5 accent-emerald-500 rounded cursor-pointer disabled:opacity-50" />
+                     <input value={ep.name} onChange={(e) => updateEndpoint(ep.id, { name: e.target.value })} className={`bg-transparent text-xs font-bold border-none outline-none focus:ring-0 p-0 w-32 ${ep.disabled ? 'text-slate-500' : 'text-slate-200'}`} />
                    </div>
-                   <button onClick={() => removeEndpoint(ep.id)} className="text-slate-600 hover:text-red-400 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                   <div className="flex items-center gap-1">
+                     <button onClick={() => updateEndpoint(ep.id, { disabled: !ep.disabled, active: ep.disabled ? ep.active : false })} className={`p-1 ${ep.disabled ? 'text-amber-400 hover:text-amber-300' : 'text-slate-600 hover:text-amber-400'}`} title={ep.disabled ? "取消虚化" : "虚化节点（保留但不使用）"}>
+                       {ep.disabled ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                     </button>
+                     <button onClick={() => copyEndpoint(ep)} className="text-slate-600 hover:text-indigo-400 p-1" title="复制节点"><Copy className="w-3.5 h-3.5" /></button>
+                     <button onClick={() => removeEndpoint(ep.id)} className="text-slate-600 hover:text-red-400 p-1" title="删除节点"><Trash2 className="w-3.5 h-3.5" /></button>
+                   </div>
                  </div>
-                 <div className="space-y-2">
+                 <div className={`space-y-2 ${ep.disabled ? 'pointer-events-none' : ''}`}>
                    <select value={ep.type} onChange={(e) => updateEndpoint(ep.id, { type: e.target.value as any })} className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-2 py-1.5 outline-none"><option value="google_sdk">Google GenAI SDK (默认)</option><option value="openai_compatible">OpenAI 兼容 (自定义 URL)</option></select>
                    {ep.type === 'openai_compatible' && <input placeholder="Base URL" value={ep.baseUrl} onChange={(e) => updateEndpoint(ep.id, { baseUrl: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-2 py-1.5 outline-none placeholder-slate-600" />}
                    <input type="password" placeholder="API Key" value={ep.apiKey} onChange={(e) => updateEndpoint(ep.id, { apiKey: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs px-2 py-1.5 outline-none placeholder-slate-600" />
                    <div className="flex gap-2">
-                     <button onClick={() => fetchModelsForEndpoint(ep.id)} disabled={ep.isChecking || !ep.apiKey} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center shrink-0 w-24 ${ep.connectionStatus === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : ep.connectionStatus === 'error' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' : 'bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500'}`}>{ep.isChecking ? <Loader2 className="w-3 h-3 animate-spin" /> : ep.connectionStatus === 'success' ? <Wifi className="w-3 h-3" /> : ep.connectionStatus === 'error' ? <WifiOff className="w-3 h-3" /> : '连接'}</button>
+                     <button onClick={() => fetchModelsForEndpoint(ep.id)} disabled={ep.isChecking || !ep.apiKey || ep.disabled} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center shrink-0 w-24 ${ep.connectionStatus === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : ep.connectionStatus === 'error' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' : 'bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500'}`}>{ep.isChecking ? <Loader2 className="w-3 h-3 animate-spin" /> : ep.connectionStatus === 'success' ? <Wifi className="w-3 h-3" /> : ep.connectionStatus === 'error' ? <WifiOff className="w-3 h-3" /> : '连接'}</button>
                      <div className="relative flex-1"><select value={ep.model} onChange={(e) => updateEndpoint(ep.id, { model: e.target.value })} className="w-full h-full bg-slate-900 border border-slate-700 rounded-lg text-xs pl-2 pr-8 py-1.5 outline-none appearance-none">{ep.availableModels?.map(m => (<option key={m} value={m}>{m}</option>)) || <option value={ep.model}>{ep.model}</option>}</select><List className="w-3 h-3 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" /></div>
                    </div>
                  </div>

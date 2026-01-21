@@ -26,7 +26,8 @@ export interface Endpoint {
   apiKey: string;
   model: string;
   active: boolean;
-  
+  disabled?: boolean; // 虚化状态：保留配置但不参与处理
+
   // 节点连接状态与模型列表
   availableModels?: string[];
   isChecking?: boolean;
