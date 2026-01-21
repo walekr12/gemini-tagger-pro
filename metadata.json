@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Batch Tagger",
+  "description": "A high-performance batch image tagging application using Gemini API. Supports ZIP uploads, custom three-stage prompting for jailbreak/constraint bypass, and one-click ZIP export with generated metadata files.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

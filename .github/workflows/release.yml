@@ -1,0 +1,88 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # 触发条件：推送 v 开头的标签，例如 v2.3.0
+  workflow_dispatch:  # 允许手动触发
+
+permissions:
+  contents: write  # 需要写权限来创建 release
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Create dist archive
+        run: |
+          cd dist
+          zip -r ../gemini-tagger-pro-dist.zip .
+          cd ..
+
+      - name: Get version from package.json
+        id: package_version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Get tag name
+        id: tag_name
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.tag_name.outputs.tag }}
+          body: |
+            ## Gemini Tagger Pro ${{ steps.tag_name.outputs.tag }}
+
+            ### 🚀 Features
+            - Batch image tagging with Google Gemini AI
+            - Multi-endpoint support (Google SDK + OpenAI-compatible)
+            - Concurrent processing with retry mechanism
+            - Image compression and validation
+            - ZIP import/export functionality
+
+            ### 📦 Installation
+            1. Download `gemini-tagger-pro-dist.zip`
+            2. Extract the archive
+            3. Serve the `dist` folder with any static web server
+            4. Configure your Gemini API key in the settings
+
+            ### 🔧 Performance Optimizations
+            - Optimized batch processing algorithm
+            - Reduced state update frequency
+            - Improved concurrent processing stability
+
+            ### 📝 Changelog
+            See [CLAUDE.md](https://github.com/${{ github.repository }}/blob/main/CLAUDE.md) for architecture details.
+          files: |
+            gemini-tagger-pro-dist.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ steps.tag_name.outputs.tag }}
+          path: dist/
+          retention-days: 90

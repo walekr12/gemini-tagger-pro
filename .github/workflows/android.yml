@@ -1,0 +1,60 @@
+
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Web Assets
+        run: npm run build
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Initialize Capacitor & Android
+        run: |
+          # 初始化 Capacitor 项目配置
+          npx cap init "Gemini Tagger" "com.geminitagger.pro" --web-dir=dist --package-manager=npm
+          # 添加 Android 平台支持
+          npx cap add android
+          # 同步 Web 资源到 Android 项目
+          npx cap sync
+
+      - name: Build APK (Debug)
+        run: |
+          cd android
+          # 赋予 Gradle 脚本执行权限
+          chmod +x gradlew
+          # 构建 Debug 版本 APK
+          ./gradlew assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemini-tagger-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
