@@ -11,7 +11,10 @@
       "Bash(npm view:*)",
       "Bash(git push:*)",
       "Bash(git tag:*)",
-      "Bash(npx cap add:*)"
+      "Bash(npx cap add:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx cap sync:*)",
+      "Bash(./gradlew assembleDebug:*)"
     ]
   }
 }
