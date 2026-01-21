@@ -134,9 +134,7 @@ jobs:
 
       - name: Sync Capacitor
         run: |
-          npm run cap:sync
-        env:
-          CI: true
+          ./node_modules/.bin/cap sync android
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
