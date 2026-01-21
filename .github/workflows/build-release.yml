@@ -133,7 +133,8 @@ jobs:
         run: npm ci
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: |
+          npx --yes @capacitor/cli sync android
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
