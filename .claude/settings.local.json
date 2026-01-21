@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Bash(*)",
       "Bash(git commit:*)",
       "Bash(git branch:*)",
       "Bash(where:*)",
@@ -14,7 +13,10 @@
       "Bash(npx cap add:*)",
       "Bash(npm run build:*)",
       "Bash(npx cap sync:*)",
-      "Bash(./gradlew assembleDebug:*)"
+      "Bash(./gradlew assembleDebug:*)",
+      "Bash(npm run dev)",
+      "Bash(curl:*)",
+      "Bash(git add:*)"
     ]
   }
 }
